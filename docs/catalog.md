@@ -229,6 +229,8 @@ Represents a ServiceNow catalog item.
 - `picture` (string, optional): Picture URL of the catalog item
 - `active` (boolean, optional): Whether the catalog item is active
 - `order` (integer, optional): Order of the catalog item in its category
+- `delivery_time` (string, optional): How long it is expected to take to deliver this item (if defined)
+- `mandatory_attachment` (boolean, optional): Whether the catalog item requires an attachment prior to submission
 
 ### CatalogCategoryModel
 
@@ -245,14 +247,66 @@ Represents a ServiceNow catalog category.
 
 ### CatalogItemVariableModel
 
-Represents a ServiceNow catalog item variable.
+Represents a ServiceNow catalog item variable or container.
 
 **Fields:**
-- `sys_id` (string): Unique identifier for the variable
-- `name` (string): Name of the variable
-- `label` (string): Label of the variable
-- `type` (string): Type of the variable
-- `mandatory` (boolean, optional): Whether the variable is mandatory
-- `default_value` (string, optional): Default value of the variable
-- `help_text` (string, optional): Help text for the variable
-- `order` (integer, optional): Order of the variable
+- `id` (string): Unique identifier for the variable.
+- `name` (string): Internal name of the variable.
+- `label` (string): Display label for the variable.
+- `type` (integer): Numeric variable type code.
+- `friendly_type` (string): Readable variable type (e.g., `reference`, `check_box`, `container_start`).
+- `display_type` (string, optional): Display type label shown in UI (e.g., `Reference`, `Select Box`).
+- `mandatory` (boolean): Whether the variable is mandatory.
+- `read_only` (boolean): Whether the variable is read-only.
+- `active` (boolean): Whether the variable is active.
+- `value` (string | boolean | null): Stored or default value of the variable.
+- `displayvalue` (string): Human-readable form of the value.
+- `help_text` (string, optional): Help or tooltip text shown to the user.
+- `dynamic_value_field` (string, optional): Field used for dynamic default value sourcing.
+- `dynamic_value_dot_walk_path` (string, optional): Dot-walk path used in dynamic value references.
+- `ref_qualifier` (string, optional): Reference qualifier for filtering reference field results.
+- `reference` (string, optional): Reference table name (for `type = reference`).
+- `table` (string, optional): Table name used by list collector or reference-type variables.
+- `choices` (ChoiceModel[], optional): Available choice options for `select_box` or `choice` type variables.
+- `attributes` (string, optional): Comma-separated string of configuration attributes.
+- `max_length` (integer): Maximum input length.
+- `order` (integer): Display order for the variable within the item.
+- `render_label` (boolean): Whether to render the label in UI.
+- `conversational_label` (string, optional): Label used in Virtual Agent conversations.
+- `pricing_implications` (boolean, optional): Whether the variable affects pricing.
+- `layout` (string, optional): Layout configuration (e.g., `normal`).
+- `children` (CatalogItemVariableModel[], optional): Nested variables, if this variable is a container.
+- `containerType` (string, optional): Container layout type (e.g., `one_to_one`, `checkbox_container`).
+- `containerSplitId` (string | null, optional): Split container reference.
+- `containerEndId` (string | null, optional): Container end reference.
+- `columnCount` (integer, optional): Number of columns used in container layout.
+- `hasSplit` (boolean, optional): Whether the container has a split layout.
+- `friendly_type` (string): Human-readable description of the variable type (e.g., `select_box`, `reference`).
+
+---
+
+### ChoiceModel
+
+Represents a selectable option within a catalog variable.
+
+**Fields:**
+- `label` (string): Display label for the choice.
+- `value` (string): Value stored when the choice is selected.
+- `index` (integer, optional): Choice order.
+- `price` (number, optional): Price associated with the choice.
+- `recurring_price` (number, optional): Recurring price for the choice.
+- `price_currency` (string, optional): Currency for the one-time price.
+- `recurring_price_currency` (string, optional): Currency for recurring price.
+
+---
+
+### ColumnModel (for List Collector / Table field definitions)
+
+Represents a single column definition used within complex list collector variables.
+
+**Fields:**
+- `label` (string): Label of the column field.
+- `type` (string): Data type of the column (e.g., `string`, `boolean`, `reference`).
+- `value` (string): Field name in the referenced table.
+- `reference` (string, optional): Reference table name, if applicable.
+- `choices` (ChoiceModel[], optional): Available options if the column has enumerated values.
