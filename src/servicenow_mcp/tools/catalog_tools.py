@@ -78,6 +78,12 @@ class MoveCatalogItemsParams(BaseModel):
     item_ids: List[str] = Field(..., description="List of catalog item IDs to move")
     target_category_id: str = Field(..., description="Target category ID to move items to")
 
+class SubmitCatalogRequestParams(BaseModel):
+    """Parameters for submitting a service catalog request."""
+    
+    item_id: str = Field(..., description="Catalog item sys_id")
+    variables: Optional[Dict[str, Any]] = Field(None, description="Variable values to submit with the request")
+
 
 def list_catalog_items(
     config: ServerConfig,
@@ -186,7 +192,7 @@ def get_catalog_item(
     logger.info(f"Getting service catalog item: {params.item_id}")
     
     # Build the API URL
-    url = f"{config.instance_url}/api/now/table/sc_cat_item/{params.item_id}"
+    url = f"{config.instance_url}/api/sn_sc/servicecatalog/items/{params.item_id}"
     
     # Prepare query parameters
     query_params = {
@@ -226,7 +232,10 @@ def get_catalog_item(
             "order": item.get("order", ""),
             "delivery_time": item.get("delivery_time", ""),
             "availability": item.get("availability", ""),
-            "variables": get_catalog_item_variables(config, auth_manager, params.item_id),
+            "mandatory_attachment": item.get("mandatory_attachment", ""),
+            "variables": item.get("variables", ""),
+            "ui_policies": item.get("ui_policy", ""),
+            "client_scripts": item.get("client_script", "")
         }
         
         return CatalogResponse(
@@ -243,66 +252,6 @@ def get_catalog_item(
             data=None,
         )
 
-
-def get_catalog_item_variables(
-    config: ServerConfig,
-    auth_manager: AuthManager,
-    item_id: str,
-) -> List[Dict[str, Any]]:
-    """
-    Get variables for a specific service catalog item.
-
-    Args:
-        config: Server configuration
-        auth_manager: Authentication manager
-        item_id: Catalog item ID or sys_id
-
-    Returns:
-        List of variables for the catalog item
-    """
-    logger.info(f"Getting variables for catalog item: {item_id}")
-    
-    # Build the API URL
-    url = f"{config.instance_url}/api/now/table/item_option_new"
-    
-    # Prepare query parameters
-    query_params = {
-        "sysparm_query": f"cat_item={item_id}^ORDERBYorder",
-        "sysparm_display_value": "true",
-        "sysparm_exclude_reference_link": "true",
-    }
-    
-    # Make the API request
-    headers = auth_manager.get_headers()
-    headers["Accept"] = "application/json"
-    
-    try:
-        response = requests.get(url, headers=headers, params=query_params)
-        response.raise_for_status()
-        
-        # Process the response
-        result = response.json()
-        variables = result.get("result", [])
-        
-        # Format the response
-        formatted_variables = []
-        for variable in variables:
-            formatted_variables.append({
-                "sys_id": variable.get("sys_id", ""),
-                "name": variable.get("name", ""),
-                "label": variable.get("question_text", ""),
-                "type": variable.get("type", ""),
-                "mandatory": variable.get("mandatory", ""),
-                "default_value": variable.get("default_value", ""),
-                "help_text": variable.get("help_text", ""),
-                "order": variable.get("order", ""),
-            })
-        
-        return formatted_variables
-    
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error getting catalog item variables: {str(e)}")
-        return []
 
 
 def list_catalog_categories(
@@ -615,3 +564,86 @@ def move_catalog_items(
             message=f"Error moving catalog items: {str(e)}",
             data=None,
         ) 
+
+def submit_catalog_request(
+    config: ServerConfig,
+    auth_manager: AuthManager,
+    params: SubmitCatalogRequestParams,
+    item_type: str = "item",  # "item" for catalog item, "producer" for record producer
+) -> CatalogResponse:
+    """
+    Submit a catalog item or record producer via ServiceNow Service Catalog API.
+    Returns a dict containing:
+        record_id     — sys_id of the relevant record (RITM if catalog item, otherwise created record)
+        record_number — number of that record
+    """
+    logger.info(f"Submitting catalog request for {item_type}: {params.item_id}")
+
+    if item_type == "producer":
+        url = f"{config.instance_url}/api/sn_sc/servicecatalog/items/{params.item_id}/submit_producer"
+    else:
+        url = f"{config.instance_url}/api/sn_sc/servicecatalog/items/{params.item_id}/order_now"
+
+    body: Dict[str, Any] = {}
+    if params.variables:
+        body["variables"] = params.variables
+    # Optionally you can include sysparm_quantity, etc for order_now.
+
+    headers = auth_manager.get_headers()
+    headers["Accept"] = "application/json"]
+    headers["Content-Type"] = "application/json"
+
+    try:
+        resp = requests.post(url, headers=headers, json=body)
+        resp.raise_for_status()
+        result = resp.json().get("result", {})
+
+        record_id = None
+        record_number = None
+
+        # Determine table created
+        created_table = result.get("table") or result.get("record")  # “table” for order_now, “record” for submit_producer
+
+        if created_table == "sc_request":
+            # A REQ was created — find the one RITM underneath
+            req_id = result.get("sys_id") or result.get("request_id")
+            if not req_id:
+                raise RuntimeError("Cannot locate sys_id for created record")
+
+            # Query sc_req_item where request = req_id, pick first
+            ritm_query_url = (f"{config.instance_url}/api/now/table/sc_req_item"
+                              f"?sysparm_query=request={req_id}&sysparm_fields=sys_id,number"
+                              f"&sysparm_limit=1&sysparm_display_value=true")
+            ritm_resp = requests.get(ritm_query_url, headers=headers)
+            ritm_resp.raise_for_status()
+            ritm_list = ritm_resp.json().get("result", [])
+            if ritm_list:
+                record_id = ritm_list[0].get("sys_id")
+                record_number = ritm_list[0].get("number")
+            else:
+                # No RITM found — fallback to REQ itself
+                record_id = req_id
+                record_number = result.get("request_number") or result.get("number")
+        else:
+            # Not a REQ => return created record (could be incident/change/custom or maybe RITM directly)
+            record_id = result.get("sys_id")
+            record_number = result.get("number") or result.get("request_number")
+
+        formatted = {
+            "record_id": record_id,
+            "record_number": record_number,
+        }
+
+        return CatalogResponse(
+            success=True,
+            message=f"Submitted catalog request; created record {record_number or record_id}",
+            data=formatted,
+        )
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error submitting catalog request: {str(e)}")
+        return CatalogResponse(
+            success=False,
+            message=f"Error submitting catalog request: {str(e)}",
+            data=None,
+        )
